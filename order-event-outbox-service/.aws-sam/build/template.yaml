@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Template for outboxpattern
+Parameters:
+  OrderOutboxEventProcessingHandlerName:
+    Type: String
+    Description: function name
+    Default: order-event-outbox-service
+Resources:
+  OrderNotificationOutboxTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: OrderNotificationOutbox
+      AttributeDefinitions:
+      - AttributeName: id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: id
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+  ProcessDynamoDBStream:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: com.aws.microservices.order.messaging.infrastructure.lambda.OrderOutboxEventHandler::handleRequest
+      FunctionName:
+        Ref: OrderOutboxEventProcessingHandlerName
+      Architectures:
+      - arm64
+      Runtime: java17
+      MemorySize: 512
+      Timeout: 300
+      Tracing: Active
+      Environment:
+        Variables:
+          bootstrap_server: boot-pxem5hnc.c3.kafka-serverless.ap-south-1.amazonaws.com:9098
+      VpcConfig:
+        SecurityGroupIds:
+        - sg-0e3eb64c724c692ee
+        SubnetIds:
+        - subnet-0a54b3bbc8e984632
+        - subnet-0344bbb898a7cee95
+      Policies:
+        Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:*
+          Resource:
+          - Fn::Sub:
+            - arn:aws:dynamodb:*:*:table/${Table}
+            - Table:
+                Ref: OrderNotificationOutboxTable
+        - Effect: Allow
+          Action:
+          - kafka-cluster:Connect
+          - kafka-cluster:AlterCluster
+          - kafka-cluster:DescribeCluster
+          Resource:
+          - arn:aws:kafka:ap-south-1:669558139762:cluster/lambda-msk-test/*
+        - Effect: Allow
+          Action:
+          - kafka-cluster:*Topic*
+          - kafka-cluster:WriteData
+          - kafka-cluster:ReadData
+          Resource:
+          - arn:aws:kafka:ap-south-1:669558139762:topic/lambda-msk-test/*
+        - Effect: Allow
+          Action:
+          - kafka-cluster:AlterGroup
+          - kafka-cluster:DescribeGroup
+          Resource:
+          - arn:aws:kafka:ap-south-1:669558139762:group/lambda-msk-test/*
+        - Effect: Allow
+          Action:
+          - ec2:CreateNetworkInterface
+          - ec2:DescribeNetworkInterfaces
+          - ec2:DeleteNetworkInterface
+          Resource: '*'
+      Events:
+        Stream:
+          Type: DynamoDB
+          Properties:
+            Stream:
+              Fn::GetAtt:
+              - OrderNotificationOutboxTable
+              - StreamArn
+            BatchSize: 100
+            StartingPosition: TRIM_HORIZON
+      CodeUri: ProcessDynamoDBStream
+    Metadata:
+      SamResourceId: ProcessDynamoDBStream
